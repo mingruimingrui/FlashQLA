@@ -101,9 +101,17 @@ def tilelang_chunk_local_cumsum(
 
                 left = seq_start_idx + chunk_idx * block_S
                 if batch_idx == real_batch_size - 1:
-                    for j, i in T.Parallel(block_S, H):
-                        if left + j >= seq_end_idx and left + j < num_tokens:
-                            g_cumsum[bb, left + j, i] = 0
+                    if left + block_S >= seq_end_idx:
+                        # Last chunk of the last sequence: zero every trailing
+                        # padding token, not just the ones falling inside this
+                        # chunk -- padding may span many chunks.
+                        for i_p in T.serial(
+                            T.ceildiv(num_tokens - seq_end_idx, block_S)
+                        ):
+                            pad_left = seq_end_idx + i_p * block_S
+                            for j, i in T.Parallel(block_S, H):
+                                if pad_left + j < num_tokens:
+                                    g_cumsum[bb, pad_left + j, i] = 0
 
     else:
 

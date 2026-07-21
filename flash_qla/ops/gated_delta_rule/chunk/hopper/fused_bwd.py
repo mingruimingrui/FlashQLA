@@ -919,7 +919,7 @@ def tilelang_fused_chunk_gdr_bwd(
                     if num_iters > 0:
                         T.barrier_arrive(bar_00)
 
-                elif tx < 384 + 64:  # TODO: set padding to 0
+                elif tx < 384 + 64:
                     for i_s in T.serial(num_iters):
                         left = seq_start_idx + (num_iters - i_s - 1) * block_S
                         right = left + block_S
@@ -969,7 +969,25 @@ def tilelang_fused_chunk_gdr_bwd(
                         else:
                             T.copy(dqkv_shared, dq[batch_idx, left:right, bh, 0:DK])
 
-                elif tx < 384 + 96:  # TODO: set padding to 0
+                    # Trailing padding tokens -- [seq_end_idx, num_tokens) of the
+                    # last sequence -- are never touched by the store loop above,
+                    # so callers would read whatever the allocator handed back.
+                    # Same intent as the "For sglang padding" branch in fused_fwd,
+                    # but walks the whole padded range rather than only the tail
+                    # of the final chunk.
+                    if is_varlen:
+                        if bb == batch_size - 1:
+                            for i_p in T.serial(
+                                T.ceildiv(num_tokens - seq_end_idx, block_S)
+                            ):
+                                pad_left = seq_end_idx + i_p * block_S
+                                for j_s, j_v in T.Parallel(block_S, DV):
+                                    if pad_left + j_s < num_tokens:
+                                        dq[batch_idx, pad_left + j_s, bh, j_v] = 0
+                                        dk[batch_idx, pad_left + j_s, bh, j_v] = 0
+                                        dv[batch_idx, pad_left + j_s, bh, j_v] = 0
+
+                elif tx < 384 + 96:
                     for i_s in T.serial(num_iters - 1):
                         chunk_idx = num_iters - i_s - 2
                         left = seq_start_idx + chunk_idx * block_S
@@ -1053,6 +1071,18 @@ def tilelang_fused_chunk_gdr_bwd(
                         else:
                             for j_s in T.Parallel(block_S):
                                 db[batch_idx, left + j_s, bh] = db_shared[j_s]
+
+                    # See the matching dq/dk/dv padding fill above.
+                    if is_varlen:
+                        if bb == batch_size - 1:
+                            for i_p in T.serial(
+                                T.ceildiv(num_tokens - seq_end_idx, block_S)
+                            ):
+                                pad_left = seq_end_idx + i_p * block_S
+                                for j_s in T.Parallel(block_S):
+                                    if pad_left + j_s < num_tokens:
+                                        dg[batch_idx, pad_left + j_s, bh] = 0
+                                        db[batch_idx, pad_left + j_s, bh] = 0
 
     return tilelang_fused_chunk_gdr_bwd_kernel
 
