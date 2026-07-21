@@ -38,8 +38,8 @@ def tilelang_kkt_solve(
     a_shape = (data_batch_size, num_tokens, H, chunk_size)
     b_shape = (data_batch_size, num_tokens, H)
 
-        
-        
+
+
 
     @T.macro
     def kernel_body_32(
@@ -79,6 +79,7 @@ def tilelang_kkt_solve(
             {
                 a16i_shared: tilelang.layout.make_linear_layout(a16i_shared),
                 a16o_shared: tilelang.layout.make_linear_layout(a16o_shared),
+                a32_shared: tilelang.layout.make_quarter_bank_swizzled_layout(a32_shared),
             }
         )
 
@@ -101,7 +102,7 @@ def tilelang_kkt_solve(
                     b_shared[j_s] = b[bb, left + j_s, bh]
                 else:
                     b_shared[j_s] = 0
-        # A = K @ K^T 
+        # A = K @ K^T
         if right <= seq_end_idx:
             T.ptx_wait_group(0)
         T.gemm(k_shared,k_shared,a32_fragment,transpose_B=True,clear_accum=True)
@@ -182,7 +183,7 @@ def tilelang_kkt_solve(
         for k_s, k_t in T.Parallel(16, 16):
             a32_shared[16 + k_s, 16 + k_t] = a16i_shared[1, k_s, k_t]
 
-            
+
 
         # Save A (unmasked)
         if right <= seq_end_idx:
@@ -192,7 +193,7 @@ def tilelang_kkt_solve(
                 if left + j_s < seq_end_idx:
                     a[bb, left + j_s, bh, j_t] = a32_shared[j_s, j_t]
 
-   
+
 
     if is_varlen:
 

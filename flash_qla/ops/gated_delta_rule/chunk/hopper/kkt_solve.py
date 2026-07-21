@@ -77,6 +77,7 @@ def tilelang_kkt_solve(
             {
                 a16i_shared: tilelang.layout.make_linear_layout(a16i_shared),
                 a16o_shared: tilelang.layout.make_linear_layout(a16o_shared),
+                a64_shared: tilelang.layout.make_quarter_bank_swizzled_layout(a64_shared),
             }
         )
 
