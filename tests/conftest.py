@@ -1,3 +1,47 @@
+import os
+import subprocess
+
+
+def _visible_device_ids():
+    """Physical GPU ids this run is allowed to touch.
+
+    Honours an existing CUDA_VISIBLE_DEVICES so callers can fence off busy GPUs,
+    e.g. CUDA_VISIBLE_DEVICES=1,2,3 pytest -n 3.
+    """
+    preset = os.environ.get("CUDA_VISIBLE_DEVICES")
+    if preset is not None:
+        return [d.strip() for d in preset.split(",") if d.strip()]
+    try:
+        out = subprocess.check_output(["nvidia-smi", "-L"], text=True, timeout=30)
+    except Exception:
+        return []
+    return [str(i) for i, ln in enumerate(out.splitlines()) if ln.startswith("GPU ")]
+
+
+def _pin_worker_to_gpu():
+    """Give each xdist worker its own GPU, round-robin.
+
+    Must run before torch initialises CUDA -- hence at conftest import time,
+    above `import torch`. Each worker is a separate process and pytest-xdist
+    sets PYTEST_XDIST_WORKER ("gw0", "gw1", ...) before conftest is imported.
+    With more workers than GPUs the assignment wraps, so -n 16 on 8 GPUs puts
+    two workers per GPU rather than all 16 on cuda:0.
+    """
+    worker = os.environ.get("PYTEST_XDIST_WORKER")
+    if not worker:  # not running under -n; leave the environment alone
+        return
+    devices = _visible_device_ids()
+    if not devices:
+        return
+    try:
+        idx = int(worker.removeprefix("gw"))
+    except ValueError:
+        return
+    os.environ["CUDA_VISIBLE_DEVICES"] = devices[idx % len(devices)]
+
+
+_pin_worker_to_gpu()
+
 import pytest
 import torch
 
