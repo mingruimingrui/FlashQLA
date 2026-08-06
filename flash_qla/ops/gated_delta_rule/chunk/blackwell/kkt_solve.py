@@ -7,7 +7,7 @@ import torch
 import tilelang
 import tilelang.language as T
 
-from flash_qla.utils import prepare_chunk_indices
+from flash_qla.utils import prepare_chunk_indices, TILELANG_0_1_11
 
 
 @tilelang.jit(
@@ -73,12 +73,17 @@ def tilelang_kkt_solve(
 
         a64_shared = T.alloc_shared((block_S, block_S), dtype=qkva_dtype)
 
-        T.annotate_layout(
-            {
-                a16i_shared: tilelang.layout.make_linear_layout(a16i_shared),
-                a16o_shared: tilelang.layout.make_linear_layout(a16o_shared),
-            }
-        )
+        layout_map = {
+            a16i_shared: tilelang.layout.make_linear_layout(a16i_shared),
+            a16o_shared: tilelang.layout.make_linear_layout(a16o_shared),
+        }
+        if TILELANG_0_1_11:
+            # On 0.1.11 only, the a64_shared -> global epilogue lowers to a descriptor-based
+            # TMA store whose assumed swizzle does not match the hand-written element-wise
+            # fills of a64_shared, producing an index-permuted A tile. Annotating the layout
+            # pins the store back to a non-TMA path. Fixed upstream in 0.1.12.
+            layout_map[a64_shared] = tilelang.layout.make_quarter_bank_swizzled_layout(a64_shared)
+        T.annotate_layout(layout_map)
 
         # Load K
         if right <= seq_end_idx:
