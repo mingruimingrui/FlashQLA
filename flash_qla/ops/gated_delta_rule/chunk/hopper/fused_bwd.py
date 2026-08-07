@@ -111,11 +111,6 @@ def tilelang_fused_chunk_gdr_bwd(
             num_iters = T.alloc_var("int32")
             num_iters = T.ceildiv(seq_end_idx - seq_start_idx, block_S)
 
-            # Tokens past the last sequence are pure padding: the grads there are
-            # never written by the main loop, so they have to be zeroed explicitly.
-            num_pad_iters = T.alloc_var("int32")
-            num_pad_iters = T.ceildiv(num_tokens - seq_end_idx, block_S)
-
             # 2+2+2+2 + 1 + 4 = 13 units
             do_shared = T.alloc_shared((block_S, DV), dtype=o_dtype)
             q_shared = T.alloc_shared((block_S, DK), dtype=qkva_dtype)
@@ -960,19 +955,20 @@ def tilelang_fused_chunk_gdr_bwd(
                         T.barrier_arrive(bar_00)
 
                 elif tx < 384 + 64:
-                    # Zero the dQ/dK/dV padding tail
+                    # Zero dQ/dK/dV over the one chunk past the last sequence.
+                    # Downstream kernels consume that trailing tile with TMA,
+                    # which cannot mask on load; anything beyond it is padding
+                    # that the consumer is expected to mask off itself.
                     if bb == batch_size - 1:
-                        for i_p in T.serial(num_pad_iters):
-                            pad_left = seq_end_idx + i_p * block_S
-                            for j_s, j_v in T.Parallel(block_S, DV):
-                                if pad_left + j_s < num_tokens:
-                                    dv[batch_idx, pad_left + j_s, bh, j_v] = 0
-                            for j_s, j_k in T.Parallel(block_S, DK):
-                                if pad_left + j_s < num_tokens:
-                                    dq[batch_idx, pad_left + j_s, bh, j_k] = 0
-                            for j_s, j_k in T.Parallel(block_S, DK):
-                                if pad_left + j_s < num_tokens:
-                                    dk[batch_idx, pad_left + j_s, bh, j_k] = 0
+                        for j_s, j_v in T.Parallel(block_S, DV):
+                            if seq_end_idx + j_s < num_tokens:
+                                dv[batch_idx, seq_end_idx + j_s, bh, j_v] = 0
+                        for j_s, j_k in T.Parallel(block_S, DK):
+                            if seq_end_idx + j_s < num_tokens:
+                                dq[batch_idx, seq_end_idx + j_s, bh, j_k] = 0
+                        for j_s, j_k in T.Parallel(block_S, DK):
+                            if seq_end_idx + j_s < num_tokens:
+                                dk[batch_idx, seq_end_idx + j_s, bh, j_k] = 0
 
                     for i_s in T.serial(num_iters):
                         left = seq_start_idx + (num_iters - i_s - 1) * block_S
@@ -1080,18 +1076,15 @@ def tilelang_fused_chunk_gdr_bwd(
                         T.barrier_arrive(bar_02)
 
                 else:
-                    # Zero the dG/dB padding tail. dG is fed to the reverse
-                    # chunk_local_cumsum and then handed back to autograd, so the
-                    # tail must be a real zero rather than uninitialized memory.
+                    # Same one-chunk fill for dG/dB, which the two producer warp
+                    # groups previously left untouched entirely.
                     if bb == batch_size - 1:
-                        for i_p in T.serial(num_pad_iters):
-                            pad_left = seq_end_idx + i_p * block_S
-                            for j_s in T.Parallel(block_S):
-                                if pad_left + j_s < num_tokens:
-                                    dg[batch_idx, pad_left + j_s, bh] = 0
-                            for j_s in T.Parallel(block_S):
-                                if pad_left + j_s < num_tokens:
-                                    db[batch_idx, pad_left + j_s, bh] = 0
+                        for j_s in T.Parallel(block_S):
+                            if seq_end_idx + j_s < num_tokens:
+                                dg[batch_idx, seq_end_idx + j_s, bh] = 0
+                        for j_s in T.Parallel(block_S):
+                            if seq_end_idx + j_s < num_tokens:
+                                db[batch_idx, seq_end_idx + j_s, bh] = 0
 
                     for i_s in T.serial(num_iters):
                         left = seq_start_idx + (num_iters - i_s - 1) * block_S
