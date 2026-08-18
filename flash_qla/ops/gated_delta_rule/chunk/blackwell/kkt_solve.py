@@ -7,7 +7,7 @@ import torch
 import tilelang
 import tilelang.language as T
 
-from flash_qla.utils import prepare_chunk_indices
+from flash_qla.utils import prepare_chunk_indices, TILELANG_0_1_11
 
 
 @tilelang.jit(
@@ -195,7 +195,8 @@ def tilelang_kkt_solve(
 
         # Save A (unmasked)
         if right <= seq_end_idx:
-            T.copy(a64_shared, a[bb, left:right, bh, 0:block_S])
+            # 0.1.11 lowers this store to a TMA whose swizzle mismatches a64_shared; fixed in 0.1.12.
+            T.copy(a64_shared, a[bb, left:right, bh, 0:block_S], disable_tma=TILELANG_0_1_11)
         else:
             for j_s, j_t in T.Parallel(block_S, block_S):
                 if left + j_s < seq_end_idx:
