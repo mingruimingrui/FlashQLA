@@ -26,6 +26,7 @@ elif tilelang.contrib.nvcc.get_target_compute_version() in ["12.0", "12.1"]:
 else:
     raise ValueError(f"FlashQLA now support sm90, sm100, sm103, sm120 and sm121 only. Found compute version: {tilelang.contrib.nvcc.get_target_compute_version()}")
 from .cp_context import intra_card_cp_preprocess, intra_card_cp_preprocess_bwd, _calc_cp_seqs, _create_cu_seqlens
+from .sp import chunk_gated_delta_rule_sp, sp_shard_range
 
 from flash_qla.utils import input_guard
 

@@ -50,6 +50,7 @@ def _calc_cp_seqs(
     chunk_size: int,
     num_v_heads: int,
     is_bwd: bool = False,
+    force_cp: bool = False,
 ):
     device = raw_cu_seqlens.device
     seqlen_dtype = raw_cu_seqlens.dtype
@@ -124,6 +125,13 @@ def _calc_cp_seqs(
             )
     else:
         raise ValueError(f"FlashQLA now support sm90, sm100, sm103, sm120 and sm121 only. Found compute version: {tilelang.contrib.nvcc.get_target_compute_version()}")
+
+    # Sequence parallelism has to run the state scan whatever the heuristic
+    # says, because a rank's neighbours need its boundary state. That removes
+    # the fixed cost the thresholds above are weighing, so the only question
+    # left is whether to run the mandatory scan at segment parallelism or at
+    # one CTA per (sequence, head) -- and the answer is always the former.
+    use_cp = use_cp or force_cp
 
     if use_cp:
         cp_cu_seqlens = torch.tensor(

@@ -18,8 +18,11 @@ import ast
 from pathlib import Path
 
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CHUNK_INIT = "flash_qla/ops/gated_delta_rule/chunk/__init__.py"
+SP = "flash_qla/ops/gated_delta_rule/chunk/sp.py"
 
 
 def _parse(rel_path: str) -> ast.Module:
@@ -40,10 +43,19 @@ def _get_method(cls: ast.ClassDef, name: str) -> ast.FunctionDef:
     raise AssertionError(f"method {name!r} not found on {cls.name}")
 
 
-def test_chunk_gated_delta_rule_grad_count_matches_forward_inputs():
+@pytest.mark.parametrize(
+    "rel_path, class_name",
+    [
+        (CHUNK_INIT, "ChunkGatedDeltaRuleFunction"),
+        # The sequence-parallel forward takes several extra non-differentiable
+        # arguments, so its return tuple is the easiest one to leave stale.
+        (SP, "SPChunkGatedDeltaRuleFunction"),
+    ],
+)
+def test_grad_count_matches_forward_inputs(rel_path, class_name):
     """``backward`` must return one gradient per non-``ctx`` input of ``forward``."""
-    module = _parse(CHUNK_INIT)
-    cls = _get_class(module, "ChunkGatedDeltaRuleFunction")
+    module = _parse(rel_path)
+    cls = _get_class(module, class_name)
 
     fwd = _get_method(cls, "forward")
     fwd_args = fwd.args.args
@@ -67,5 +79,6 @@ def test_chunk_gated_delta_rule_grad_count_matches_forward_inputs():
 
 
 if __name__ == "__main__":
-    test_chunk_gated_delta_rule_grad_count_matches_forward_inputs()
+    test_grad_count_matches_forward_inputs(CHUNK_INIT, "ChunkGatedDeltaRuleFunction")
+    test_grad_count_matches_forward_inputs(SP, "SPChunkGatedDeltaRuleFunction")
     print("OK")
