@@ -10,6 +10,15 @@ import tilelang.language as T
 from flash_qla.utils import prepare_chunk_indices, TILELANG_0_1_11
 
 
+# a64_shared below is filled element-wise, so its layout is inferred rather than
+# declared. tilelang 0.1.11 lowers the shared -> global store of it to a TMA whose
+# swizzle disagrees with that inferred layout, which silently corrupts A on SM100
+# (fixed upstream in 0.1.12, tile-ai/tilelang#2391). Annotating an explicit layout
+# for a64_shared would avoid the mismatch as well; disabling TMA for this one store
+# is the smaller dirty change.
+TMA_STORE_LAYOUT_BROKEN = TILELANG_0_1_11
+
+
 @tilelang.jit(
     # out_idx=[-1],
     pass_configs={
@@ -195,8 +204,11 @@ def tilelang_kkt_solve(
 
         # Save A (unmasked)
         if right <= seq_end_idx:
-            # 0.1.11 lowers this store to a TMA whose swizzle mismatches a64_shared; fixed in 0.1.12.
-            T.copy(a64_shared, a[bb, left:right, bh, 0:block_S], disable_tma=TILELANG_0_1_11)
+            T.copy(
+                a64_shared,
+                a[bb, left:right, bh, 0:block_S],
+                disable_tma=TMA_STORE_LAYOUT_BROKEN,
+            )
         else:
             for j_s, j_t in T.Parallel(block_S, block_S):
                 if left + j_s < seq_end_idx:
