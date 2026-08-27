@@ -5,6 +5,19 @@ import torch
 import tilelang
 import tilelang.language as T
 
+from flash_qla.utils import TILELANG_0_1_12
+
+
+# The global -> shared loads of ht_buffer / mt_buffer below sit inside a
+# T.Pipelined region and are awaited through mbarriers. On tilelang 0.1.12 the
+# TMA descriptor built for them no longer agrees with what the kernel waits on,
+# so the mbarrier is released before the tile has fully landed and the gemm reads
+# a partially written h_shared. The generated CUDA is unchanged from 0.1.11 --
+# the mismatch lives in the runtime descriptor -- which is why this shows up as
+# run-to-run nondeterminism rather than a stable wrong answer. Falling back to a
+# non-TMA copy for these three loads restores 0.1.11's results bit-exactly.
+TMA_LOAD_DESC_BROKEN = TILELANG_0_1_12
+
 
 @tilelang.jit()
 def tilelang_get_warmup_chunks(
@@ -337,14 +350,20 @@ def tilelang_correct_h0(
                 T.copy(
                     ht_buffer[idx, bh, DV_start:DV_end, 0:DK],
                     h_shared,
+                    disable_tma=TMA_LOAD_DESC_BROKEN,
                 )
             else:
                 T.copy(
                     ht_buffer[idx, bh, 0:DK, DV_start:DV_end],
                     h_shared,
+                    disable_tma=TMA_LOAD_DESC_BROKEN,
                 )
             # TODO: manually WASP
-            T.copy(mt_buffer[idx, bh, 0:DK, 0:DK], m_shared)
+            T.copy(
+                mt_buffer[idx, bh, 0:DK, 0:DK],
+                m_shared,
+                disable_tma=TMA_LOAD_DESC_BROKEN,
+            )
             if fallback_mask[idx, bh]:
                 T.copy(h_fragment, hd_shared)
                 T.fence_proxy_async()
