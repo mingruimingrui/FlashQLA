@@ -5,6 +5,14 @@ import torch
 import tilelang
 import tilelang.language as T
 
+from flash_qla.utils import TILELANG_0_1_12
+
+
+# Mirrors the SM90 guard in hopper/cp_fwd.py: on tilelang 0.1.12 the TMA
+# descriptor for these global -> shared loads disagrees with the mbarrier the
+# kernel waits on, so the gemm can read a partially written h_shared/m_shared.
+TMA_LOAD_DESC_BROKEN = TILELANG_0_1_12
+
 
 @tilelang.jit()
 def tilelang_get_warmup_chunks(
@@ -337,14 +345,20 @@ def tilelang_correct_h0(
                 T.copy(
                     ht_buffer[idx, bh, DV_start:DV_end, 0:DK],
                     h_shared,
+                    disable_tma=TMA_LOAD_DESC_BROKEN,
                 )
             else:
                 T.copy(
                     ht_buffer[idx, bh, 0:DK, DV_start:DV_end],
                     h_shared,
+                    disable_tma=TMA_LOAD_DESC_BROKEN,
                 )
             # TODO: manually WASP
-            T.copy(mt_buffer[idx, bh, 0:DK, 0:DK], m_shared)
+            T.copy(
+                mt_buffer[idx, bh, 0:DK, 0:DK],
+                m_shared,
+                disable_tma=TMA_LOAD_DESC_BROKEN,
+            )
             if fallback_mask[idx, bh]:
                 T.copy(h_fragment, hd_shared)
             T.copy(h_shared, h_fragment)
